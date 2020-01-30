@@ -2,49 +2,83 @@
 """First prototype for an dictionary extension workflow app."""
 
 from sys import argv
+import os.path
+import subprocess
+from subprocess import PIPE
 import gi
 gi.require_version('Gtk', '3.0')
 from gi.repository import GLib, Gio, Gtk
 
-# This would typically be its own file
-MENU_XML="""
-<?xml version="1.0" encoding="UTF-8"?>
-<interface>
-  <menu id="app-menu">
-    <section>
-      <item>
-        <attribute name="action">app.open</attribute>
-        <attribute name="label" translatable="yes">_Open...</attribute>
-      </item>
-      <item>
-        <attribute name="action">app.about</attribute>
-        <attribute name="label" translatable="yes">_About</attribute>
-      </item>
-      <item>
-        <attribute name="action">app.quit</attribute>
-        <attribute name="label" translatable="yes">_Quit</attribute>
-        <attribute name="accel">&lt;Primary&gt;q</attribute>
-    </item>
-    </section>
-  </menu>
-</interface>
-"""
 
 class LexicoAdderWindow(Gtk.ApplicationWindow):
+    """Main window of the app."""
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-
-        self.box = Gtk.Box(spacing=6)
+        self.header = Gtk.HeaderBar()
+        self.header.set_show_close_button(True)
+        self.header.props.title = "Lexico🐍: (Untitled)"
+        self.open = Gtk.Button()
+        icon = Gio.ThemedIcon(name="document-open")
+        image = Gtk.Image.new_from_gicon(icon, Gtk.IconSize.BUTTON)
+        self.open.add(image)
+        self.open.connect("clicked", self.on_open)
+        self.header.pack_end(self.open)
+        self.analyse = Gtk.Button.new_with_label("Analyse")
+        self.analyse.connect("clicked", self.on_analyse)
+        self.header.pack_end(self.analyse)
+        self.set_titlebar(self.header)
+        self.box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
         self.add(self.box)
-        self.box.show()
+        self.input_scroll = Gtk.ScrolledWindow()
+        self.input_scroll.set_border_width(5)
+        # we scroll only if needed
+        self.input_scroll.set_policy(Gtk.PolicyType.AUTOMATIC,
+                                     Gtk.PolicyType.AUTOMATIC)
         self.texti = Gtk.TextView()
-        self.box.pack_start(self.texti, True, True, 0)
-        self.texti.show()
+        self.input_scroll.add(self.texti)
+        self.box.pack_start(self.input_scroll, True, True, 0)
+        self.inbuffer = self.texti.get_buffer()
+        self.output_scroll = Gtk.ScrolledWindow()
+        self.output_scroll.set_border_width(5)
+        # we scroll only if needed
+        self.output_scroll.set_policy(Gtk.PolicyType.AUTOMATIC,
+                                     Gtk.PolicyType.AUTOMATIC)
+        self.texto = Gtk.TextView(editable=False)
+        self.output_scroll.add(self.texto)
+        self.box.pack_start(self.output_scroll, True, True, 0)
+        self.outbuffer = self.texto.get_buffer()
 
+    def on_open(self, button):
+        dialog = Gtk.FileChooserDialog("Please choose a file", self,
+                                       Gtk.FileChooserAction.OPEN,
+                                       (Gtk.STOCK_CANCEL,
+                                        Gtk.ResponseType.CANCEL,
+                                        Gtk.STOCK_OPEN, Gtk.ResponseType.OK))
+        dialog.set_current_folder(os.path.abspath('.'))
+        response = dialog.run()
+        if response == Gtk.ResponseType.OK:
+            with open(dialog.get_filename(), 'r') as f:
+                data = f.read()
+                self.inbuffer.set_text(data)
+                self.header.props.title = "Lexico🐍: " + dialog.get_filename()
+        elif response == Gtk.ResponseType.CANCEL:
+            print("Cancel clicked")
+        dialog.destroy()
 
+    def on_analyse(self, button):
+        print("We analyse...")
+        textinput = self.inbuffer.get_text(self.inbuffer.get_start_iter(),
+                                           self.inbuffer.get_end_iter(), False)
+        # FIXME: when 3.7 is common, use subprocess.run
+        with subprocess.Popen(["apertium", "deu-morph"], stdout=PIPE,
+                              stdin=PIPE) as apemorph:
+            apemorph.stdin.write(textinput.encode())
+            apemorph.stdin.close()
+            self.outbuffer.set_text(apemorph.stdout.read().decode("UTF-8"))
 
 class LexicoAdderApplication(Gtk.Application):
+    """Application container stuff."""
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args,
@@ -63,11 +97,6 @@ class LexicoAdderApplication(Gtk.Application):
         action = Gio.SimpleAction.new("quit", None)
         action.connect("activate", self.on_quit)
         self.add_action(action)
-        action = Gio.SimpleAction.new("open", None)
-        action.connect("activate", self.on_open)
-        self.add_action(action)
-        builder = Gtk.Builder.new_from_string(MENU_XML, -1)
-        self.set_app_menu(builder.get_object("app-menu"))
 
     def do_activate(self):
         # We only allow a single window and raise any existing ones
@@ -76,7 +105,7 @@ class LexicoAdderApplication(Gtk.Application):
             # when the last one is closed the application shuts down
             self.window = LexicoAdderWindow(application=self,
                                             title="Lexicoadder")
-
+            self.window.show_all()
         self.window.present()
 
     def do_command_line(self, command_line):
@@ -96,20 +125,8 @@ class LexicoAdderApplication(Gtk.Application):
     def on_quit(self, action, param):
         self.quit()
 
-    def on_open(self, action, param):
-        dialog = Gtk.FileChooserDialog("Please choose a file", self.window,
-                                       Gtk.FileChooserAction.OPEN,
-                                       (Gtk.STOCK_CANCEL,
-                                        Gtk.ResponseType.CANCEL,
-                                        Gtk.STOCK_OPEN, Gtk.ResponseType.OK))
-        response = dialog.run()
-        if response == Gtk.ResponseType.OK:
-            print("Open clicked")
-            print("File selected: " + dialog.get_filename())
-        elif response == Gtk.ResponseType.CANCEL:
-            print("Cancel clicked")
-        dialog.destroy()
 
 if __name__ == "__main__":
     app = LexicoAdderApplication()
     app.run(argv)
+
