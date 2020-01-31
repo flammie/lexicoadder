@@ -10,6 +10,15 @@ gi.require_version('Gtk', '3.0')
 from gi.repository import GLib, Gio, Gtk
 
 
+def apepipe(args, inputs, **kwargs):
+    # FIXME: when 3.7 is common, use subprocess.run
+    with subprocess.Popen(args, stdout=PIPE, stdin=PIPE) as ape:
+        ape.stdin.write(inputs.encode())
+        ape.stdin.close()
+        outputs = ape.stdout.read().decode("UTF-8")
+    return outputs
+
+
 class LexicoAdderWindow(Gtk.ApplicationWindow):
     """Main window of the app."""
 
@@ -27,12 +36,18 @@ class LexicoAdderWindow(Gtk.ApplicationWindow):
         self.analyse = Gtk.Button.new_with_label("Analyse")
         self.analyse.connect("clicked", self.on_analyse)
         self.header.pack_end(self.analyse)
+        languagestext = apepipe(["apertium", "-l"], "")
+        languages = Gtk.ListStore(str)
+        for lang in languagestext.split():
+            languages.append([lang.strip()])
+        self.language_list = Gtk.ComboBox.new_with_model_and_entry(languages)
+        self.language_list.set_entry_text_column(0)
+        self.header.pack_end(self.language_list)
         self.set_titlebar(self.header)
         self.box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
         self.add(self.box)
         self.input_scroll = Gtk.ScrolledWindow()
         self.input_scroll.set_border_width(5)
-        # we scroll only if needed
         self.input_scroll.set_policy(Gtk.PolicyType.AUTOMATIC,
                                      Gtk.PolicyType.AUTOMATIC)
         self.texti = Gtk.TextView()
@@ -41,7 +56,6 @@ class LexicoAdderWindow(Gtk.ApplicationWindow):
         self.inbuffer = self.texti.get_buffer()
         self.output_scroll = Gtk.ScrolledWindow()
         self.output_scroll.set_border_width(5)
-        # we scroll only if needed
         self.output_scroll.set_policy(Gtk.PolicyType.AUTOMATIC,
                                      Gtk.PolicyType.AUTOMATIC)
         self.texto = Gtk.TextView(editable=False)
@@ -70,12 +84,15 @@ class LexicoAdderWindow(Gtk.ApplicationWindow):
         print("We analyse...")
         textinput = self.inbuffer.get_text(self.inbuffer.get_start_iter(),
                                            self.inbuffer.get_end_iter(), False)
-        # FIXME: when 3.7 is common, use subprocess.run
-        with subprocess.Popen(["apertium", "deu-morph"], stdout=PIPE,
-                              stdin=PIPE) as apemorph:
-            apemorph.stdin.write(textinput.encode())
-            apemorph.stdin.close()
-            self.outbuffer.set_text(apemorph.stdout.read().decode("UTF-8"))
+        outputs = apepipe(["apertium", self.get_langs()], textinput)
+        self.outbuffer.set_text(outputs)
+
+    def get_langs(self):
+        tree_iter = self.language_list.get_active_iter()
+        if tree_iter is not None:
+            model = self.language_list.get_model()
+            return model[tree_iter][0]
+
 
 class LexicoAdderApplication(Gtk.Application):
     """Application container stuff."""
